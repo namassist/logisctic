@@ -1,5 +1,6 @@
+import { formatTime } from '../state/format';
 import { BUILDING, FRONT_Z, RACK, TRUCK_SIZE, type SiteLayout } from './layout';
-import { COLORS, DOCK_TYPE_COLOR, TRUCK_STATUS_COLOR } from './palette';
+import { COLORS } from './palette';
 
 export interface SceneLabel {
   key: string;
@@ -11,19 +12,13 @@ export interface SceneLabel {
   variant: 'tag' | 'sign';
 }
 
-const timeFormat = new Intl.DateTimeFormat('en-GB', {
-  hour: '2-digit',
-  minute: '2-digit',
-  timeZone: 'Asia/Jakarta',
-});
-
 /** Screen-space labels for docks, racking zones and trucks. */
 export function buildLabels(layout: SiteLayout): SceneLabel[] {
-  const docks = layout.docks.map(({ dock, x }): SceneLabel => ({
+  const docks = layout.docks.map(({ dock, x, underMaintenance, signColor }): SceneLabel => ({
     key: dock.id,
     position: [x, BUILDING.wallHeight + 1.4, FRONT_Z],
     text: String(dock.number).padStart(2, '0'),
-    dot: dock.status === 'maintenance' ? COLORS.hazard : DOCK_TYPE_COLOR[dock.type],
+    dot: underMaintenance ? COLORS.hazard : signColor,
     variant: 'sign',
   }));
 
@@ -34,12 +29,12 @@ export function buildLabels(layout: SiteLayout): SceneLabel[] {
     variant: 'sign',
   }));
 
-  const trucks = layout.trucks.map(({ truck, x, z, where, shipment }): SceneLabel => ({
+  const trucks = layout.trucks.map(({ truck, x, z, where, shipment, accent }): SceneLabel => ({
     key: truck.id,
     position: [x, TRUCK_SIZE[truck.vehicleClass].height + 1.6, z],
     text: truck.id,
-    meta: where === 'road' && shipment ? `ETA ${timeFormat.format(new Date(shipment.eta))}` : undefined,
-    dot: TRUCK_STATUS_COLOR[truck.status],
+    meta: where === 'road' && shipment ? `ETA ${formatTime(shipment.eta)}` : undefined,
+    dot: accent,
     variant: 'tag',
   }));
 

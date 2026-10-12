@@ -1,7 +1,8 @@
-import type { RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Vector3 } from 'three';
 import type { SceneLabel } from './labels';
+import { followAlpha } from './motion';
 
 /** DOM elements for each label, keyed by SceneLabel.key. */
 export type LabelElements = Map<string, HTMLDivElement>;
@@ -33,13 +34,32 @@ export function LabelLayer({ labels, elements }: { labels: SceneLabel[]; element
 
 const projected = new Vector3();
 
-/** Lives inside the Canvas and pins each overlay element to its 3D anchor. */
+/**
+ * Lives inside the Canvas and pins each overlay element to its 3D anchor.
+ * Anchors ease towards new positions at the same rate as the objects they
+ * belong to, so a label rides along with a truck as it drives.
+ */
 export function LabelProjector({ labels, elements }: { labels: SceneLabel[]; elements: RefObject<LabelElements> }) {
-  useFrame(({ camera, size }) => {
+  const anchors = useRef(new Map<string, Vector3>());
+
+  // Forget anchors of labels that went away, so a truck that comes back later
+  // starts its label where the truck reappears.
+  useEffect(() => {
+    const keys = new Set(labels.map((l) => l.key));
+    for (const key of anchors.current.keys()) if (!keys.has(key)) anchors.current.delete(key);
+  }, [labels]);
+
+  useFrame(({ camera, size }, dt) => {
+    const a = followAlpha(dt);
     for (const label of labels) {
       const el = elements.current.get(label.key);
       if (!el) continue;
-      projected.set(...label.position).project(camera);
+      let anchor = anchors.current.get(label.key);
+      if (!anchor) anchors.current.set(label.key, (anchor = new Vector3(...label.position)));
+      anchor.x += (label.position[0] - anchor.x) * a;
+      anchor.y += (label.position[1] - anchor.y) * a;
+      anchor.z += (label.position[2] - anchor.z) * a;
+      projected.copy(anchor).project(camera);
       const visible = projected.z < 1 && Math.abs(projected.x) < 1.2 && Math.abs(projected.y) < 1.2;
       el.style.visibility = visible ? 'visible' : 'hidden';
       if (!visible) continue;

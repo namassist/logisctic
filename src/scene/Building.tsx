@@ -1,12 +1,15 @@
+import { usePointerBlocker, type ClickHandlers } from './interaction';
 import { BUILDING, FRONT_Z, type DockPlacement, type ZonePlacement } from './layout';
 import { COLORS } from './palette';
 
 const { width, depth, wallHeight, wallThickness, doorHeight } = BUILDING;
 const HALF_W = width / 2;
 
-function Wall({ x, z, w, d, h = wallHeight, y = 0 }: { x: number; z: number; w: number; d: number; h?: number; y?: number }) {
+function Wall({ x, z, w, d, h = wallHeight, y = 0, blocker }: {
+  x: number; z: number; w: number; d: number; h?: number; y?: number; blocker: ClickHandlers;
+}) {
   return (
-    <mesh position={[x, y + h / 2, z]} castShadow receiveShadow>
+    <mesh position={[x, y + h / 2, z]} castShadow receiveShadow {...blocker}>
       <boxGeometry args={[w, h, d]} />
       <meshStandardMaterial color={COLORS.wall} roughness={0.85} />
     </mesh>
@@ -27,6 +30,8 @@ function FloorLine({ x, z, w, d }: { x: number; z: number; w: number; d: number 
  * openings in the front wall wherever there is a dock.
  */
 export function Building({ docks, zones }: { docks: DockPlacement[]; zones: ZonePlacement[] }) {
+  // Walls swallow clicks so objects hidden behind them can't be picked.
+  const blocker = usePointerBlocker();
   // Front wall: solid pieces between the door openings, plus a header above.
   const openings = docks
     .map((d) => [d.x - d.doorWidth / 2, d.x + d.doorWidth / 2] as const)
@@ -49,13 +54,13 @@ export function Building({ docks, zones }: { docks: DockPlacement[]; zones: Zone
         <meshStandardMaterial color={COLORS.concrete} roughness={0.9} />
       </mesh>
 
-      <Wall x={0} z={-FRONT_Z} w={width} d={t} />
-      <Wall x={-HALF_W} z={0} w={t} d={depth} />
-      <Wall x={HALF_W} z={0} w={t} d={depth} />
+      <Wall x={0} z={-FRONT_Z} w={width} d={t} blocker={blocker} />
+      <Wall x={-HALF_W} z={0} w={t} d={depth} blocker={blocker} />
+      <Wall x={HALF_W} z={0} w={t} d={depth} blocker={blocker} />
       {frontPieces.map(([a, b]) => (
-        <Wall key={a} x={(a + b) / 2} z={FRONT_Z} w={b - a} d={t} />
+        <Wall key={a} x={(a + b) / 2} z={FRONT_Z} w={b - a} d={t} blocker={blocker} />
       ))}
-      <Wall x={0} z={FRONT_Z} w={width} d={t} y={doorHeight} h={wallHeight - doorHeight} />
+      <Wall x={0} z={FRONT_Z} w={width} d={t} y={doorHeight} h={wallHeight - doorHeight} blocker={blocker} />
 
       {/* Dark coping along the top of the walls */}
       {[

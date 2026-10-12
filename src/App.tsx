@@ -1,12 +1,14 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { SEED_NOW, seedData, type SiteId } from './data';
-import { buildLabels } from './scene/labels';
+import { seedData } from './data';
+import { formatClock } from './state/format';
+import { selectDetails, selectHighlight, selectLabels, selectSiteLayout, selectSiteStats } from './state/selectors';
+import { startSimulation, useLiveStore } from './state/store';
 import { LabelLayer, LabelProjector, type LabelElements } from './scene/LabelLayer';
-import { buildSiteLayout, type SiteLayout } from './scene/layout';
-import { DOCK_TYPE_COLOR, FORKLIFT_STATUS_COLOR, TRUCK_STATUS_COLOR, COLORS } from './scene/palette';
+import { COLORS, DOCK_TYPE_COLOR, FORKLIFT_STATUS_COLOR, TRUCK_STATUS_COLOR } from './scene/palette';
 import { CAMERA, StrategyCamera, cameraPosition } from './scene/StrategyCamera';
 import { WarehouseScene } from './scene/WarehouseScene';
+import { InspectorPanel } from './ui/InspectorPanel';
 
 const LEGEND: [label: string, color: string][] = [
   ['Truck (active)', TRUCK_STATUS_COLOR.loading],
@@ -20,23 +22,79 @@ const LEGEND: [label: string, color: string][] = [
   ['Low stock', COLORS.cartonLow],
 ];
 
-function siteStats(layout: SiteLayout) {
-  const operational = layout.docks.filter((d) => d.dock.status === 'operational').length;
-  return [
-    ['Docks in use', `${layout.docks.filter((d) => d.occupiedBy).length} / ${operational}`],
-    ['Trucks on site', String(layout.trucks.filter((t) => t.where !== 'road').length)],
-    ['Inbound en route', String(layout.trucks.filter((t) => t.where === 'road').length)],
-    ['Forklifts active', `${layout.forklifts.filter((f) => f.forklift.status === 'active').length} / ${layout.forklifts.length}`],
-    ['Low-stock SKUs', String(layout.stock.filter((s) => s.low).length)],
-  ];
+/*
+ * Connected components: each subscribes to the store slice it shows, so a
+ * simulation tick re-renders only what changed and the Canvas is never
+ * remounted.
+ */
+
+function LiveWarehouse({ labelElements }: { labelElements: RefObject<LabelElements> }) {
+  const siteId = useLiveStore((s) => s.siteId);
+  const layout = useLiveStore(selectSiteLayout);
+  const labels = useLiveStore(selectLabels);
+  const selection = useLiveStore((s) => s.selection);
+  const highlight = useLiveStore(selectHighlight);
+  const select = useLiveStore((s) => s.select);
+  return (
+    <>
+      <WarehouseScene key={siteId} layout={layout} selection={selection} highlight={highlight} onSelect={select} />
+      <LabelProjector labels={labels} elements={labelElements} />
+    </>
+  );
+}
+
+function LiveLabels({ labelElements }: { labelElements: RefObject<LabelElements> }) {
+  const labels = useLiveStore(selectLabels);
+  return <LabelLayer labels={labels} elements={labelElements} />;
+}
+
+function SiteStats() {
+  const stats = useLiveStore(selectSiteStats);
+  return (
+    <aside className="hud hud--panel hud--stats">
+      {stats.map(([label, value]) => (
+        <div key={label} className="stat">
+          <span className="stat__label">{label}</span>
+          <span className="stat__value">{value}</span>
+        </div>
+      ))}
+    </aside>
+  );
+}
+
+function SimClock() {
+  const now = useLiveStore((s) => s.now);
+  return (
+    <div className="clock" title="Simulated time (60× real time)">
+      <span className="live-dot" />
+      Live
+      <span className="clock__time">{formatClock(now)}</span>
+    </div>
+  );
+}
+
+function Inspector() {
+  const details = useLiveStore(selectDetails);
+  const select = useLiveStore((s) => s.select);
+  return details ? <InspectorPanel details={details} onClose={() => select(null)} /> : null;
 }
 
 export function App() {
-  const [siteId, setSiteId] = useState<SiteId>(seedData.sites[0].id);
-  const layout = useMemo(() => buildSiteLayout(seedData, siteId, SEED_NOW), [siteId]);
-  const labels = useMemo(() => buildLabels(layout), [layout]);
+  const siteId = useLiveStore((s) => s.siteId);
+  const setSite = useLiveStore((s) => s.setSite);
+  const select = useLiveStore((s) => s.select);
   const labelElements = useRef<LabelElements>(new Map());
   const site = seedData.sites.find((s) => s.id === siteId)!;
+
+  useEffect(() => startSimulation(), []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') select(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [select]);
 
   return (
     <div className="app">
@@ -49,12 +107,12 @@ export function App() {
           far: 900,
           position: cameraPosition(CAMERA.startTarget, CAMERA.startDistance),
         }}
+        onPointerMissed={() => select(null)}
       >
-        <WarehouseScene key={siteId} layout={layout} />
+        <LiveWarehouse labelElements={labelElements} />
         <StrategyCamera />
-        <LabelProjector labels={labels} elements={labelElements} />
       </Canvas>
-      <LabelLayer labels={labels} elements={labelElements} />
+      <LiveLabels labelElements={labelElements} />
 
       <header className="hud hud--top">
         <div className="brand">
@@ -64,27 +122,24 @@ export function App() {
             <div className="brand__sub">{site.name}</div>
           </div>
         </div>
-        <nav className="sites">
-          {seedData.sites.map((s) => (
-            <button
-              key={s.id}
-              className={s.id === siteId ? 'sites__tab sites__tab--active' : 'sites__tab'}
-              onClick={() => setSiteId(s.id)}
-            >
-              {s.code} · {s.city}
-            </button>
-          ))}
-        </nav>
+        <div className="hud__right">
+          <SimClock />
+          <nav className="sites">
+            {seedData.sites.map((s) => (
+              <button
+                key={s.id}
+                className={s.id === siteId ? 'sites__tab sites__tab--active' : 'sites__tab'}
+                onClick={() => setSite(s.id)}
+              >
+                {s.code} · {s.city}
+              </button>
+            ))}
+          </nav>
+        </div>
       </header>
 
-      <aside className="hud hud--panel hud--stats">
-        {siteStats(layout).map(([label, value]) => (
-          <div key={label} className="stat">
-            <span className="stat__label">{label}</span>
-            <span className="stat__value">{value}</span>
-          </div>
-        ))}
-      </aside>
+      <SiteStats />
+      <Inspector />
 
       <aside className="hud hud--panel hud--legend">
         {LEGEND.map(([label, color]) => (
@@ -95,7 +150,7 @@ export function App() {
         ))}
       </aside>
 
-      <footer className="hud hud--panel hud--hint">Drag to pan · Scroll to zoom · Arrow keys to move</footer>
+      <footer className="hud hud--panel hud--hint">Click anything to inspect · Drag to pan · Scroll to zoom · Esc to close</footer>
     </div>
   );
 }

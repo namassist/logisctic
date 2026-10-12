@@ -1,46 +1,95 @@
-import { useRef } from 'react';
+import { memo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import type { Group } from 'three';
+import { Select } from '@react-three/postprocessing';
+import { Vector3, type Group } from 'three';
+import type { ForkliftId } from '../data';
+import type { EntityRef } from '../state/entities';
+import { useClickHandlers } from './interaction';
 import type { ForkliftPlacement } from './layout';
 import { ForkliftModel } from './models/ForkliftModel';
+import { followAlpha, lerpAngle } from './motion';
 import { COLORS, FORKLIFT_STATUS_COLOR } from './palette';
 
-/** How far an active forklift shuttles back and forth from its spot. */
+/** How far a working forklift shuttles back and forth along its forks. */
 const SHUTTLE_RANGE = 2.5;
 
-function PlacedForklift({ placement, index }: { placement: ForkliftPlacement; index: number }) {
-  const { forklift, x, z, rotation } = placement;
-  const group = useRef<Group>(null);
-  const active = forklift.status === 'active';
-
-  useFrame(({ clock }) => {
-    if (!active || !group.current) return;
-    // Drive along the forks' axis, each unit out of phase with the others.
-    const offset = Math.sin(clock.elapsedTime * 0.6 + index * 1.7) * SHUTTLE_RANGE;
-    group.current.position.x = x + Math.sin(rotation) * offset;
-    group.current.position.z = z + Math.cos(rotation) * offset;
-  });
-
-  return (
-    <group ref={group} position={[x, 0, z]} rotation={[0, rotation, 0]}>
-      <ForkliftModel accent={FORKLIFT_STATUS_COLOR[forklift.status]} carrying={active} />
-      {forklift.status === 'charging' && (
-        // Wall charger beside the parking spot
-        <mesh position={[0.9, 0.6, 1.4]} castShadow>
-          <boxGeometry args={[0.5, 1.2, 0.4]} />
-          <meshStandardMaterial color={COLORS.forkliftMetal} emissive={FORKLIFT_STATUS_COLOR.charging} emissiveIntensity={0.15} />
-        </mesh>
-      )}
-    </group>
-  );
+interface Props {
+  forklifts: ForkliftPlacement[];
+  selection: EntityRef | null;
+  onSelect: (ref: EntityRef) => void;
 }
 
-export function Forklifts({ forklifts }: { forklifts: ForkliftPlacement[] }) {
+export function Forklifts({ forklifts, selection, onSelect }: Props) {
   return (
     <group>
-      {forklifts.map((p, i) => (
-        <PlacedForklift key={p.forklift.id} placement={p} index={i} />
+      {forklifts.map((p) => (
+        <ForkliftItem
+          key={p.forklift.id}
+          id={p.forklift.id}
+          x={p.x}
+          z={p.z}
+          rotation={p.rotation}
+          accent={p.accent}
+          moving={p.moving}
+          carrying={p.carrying}
+          charging={p.charging}
+          phase={p.phase}
+          selected={selection?.kind === 'forklift' && selection.id === p.forklift.id}
+          onSelect={onSelect}
+        />
       ))}
     </group>
   );
 }
+
+interface ItemProps {
+  id: ForkliftId;
+  x: number;
+  z: number;
+  rotation: number;
+  accent: string;
+  moving: boolean;
+  carrying: boolean;
+  charging: boolean;
+  phase: number;
+  selected: boolean;
+  onSelect: (ref: EntityRef) => void;
+}
+
+const ForkliftItem = memo(function ForkliftItem(props: ItemProps) {
+  const { id, x, z, rotation, accent, moving, carrying, charging, phase, selected, onSelect } = props;
+  const group = useRef<Group>(null);
+  const initial = useRef({ position: [x, 0, z] as const, rotation: [0, rotation, 0] as const }).current;
+  // Eased spot the shuttle motion is centred on, and how much of it to apply.
+  const base = useRef(new Vector3(x, 0, z));
+  const amplitude = useRef(moving ? 1 : 0);
+  const handlers = useClickHandlers();
+
+  useFrame(({ clock }, dt) => {
+    const g = group.current;
+    if (!g) return;
+    const a = followAlpha(dt);
+    base.current.x += (x - base.current.x) * a;
+    base.current.z += (z - base.current.z) * a;
+    amplitude.current += ((moving ? 1 : 0) - amplitude.current) * a;
+    g.rotation.y = lerpAngle(g.rotation.y, rotation, a);
+    const offset = Math.sin(clock.elapsedTime * 0.6 + phase) * SHUTTLE_RANGE * amplitude.current;
+    g.position.x = base.current.x + Math.sin(g.rotation.y) * offset;
+    g.position.z = base.current.z + Math.cos(g.rotation.y) * offset;
+  });
+
+  return (
+    <group ref={group} position={initial.position} rotation={initial.rotation} {...handlers(() => onSelect({ kind: 'forklift', id }))}>
+      <Select enabled={selected}>
+        <ForkliftModel accent={accent} carrying={carrying} />
+        {charging && (
+          // Wall charger beside the parking spot
+          <mesh position={[0.9, 0.6, 1.4]} castShadow>
+            <boxGeometry args={[0.5, 1.2, 0.4]} />
+            <meshStandardMaterial color={COLORS.forkliftMetal} emissive={FORKLIFT_STATUS_COLOR.charging} emissiveIntensity={0.15} />
+          </mesh>
+        )}
+      </Select>
+    </group>
+  );
+});
