@@ -1,7 +1,9 @@
-import { useMemo } from 'react';
-import { Grid, Instance, Instances } from '@react-three/drei';
+import { memo, useMemo } from 'react';
+import { Grid } from '@react-three/drei';
 import { APRON, DOCK_SPACING, FRONT_Z, MAP_BOUNDS, ROAD, YARD, YARD_SLOT } from './layout';
 import { COLORS } from './palette';
+import { GEOMETRY, MATERIALS } from './resources';
+import { StaticInstances, type InstanceSpec } from './StaticInstances';
 
 const LINE_Y = 0.06;
 
@@ -10,29 +12,31 @@ function Pad({ minX, maxX, minZ, maxZ, y, color }: {
   minX: number; maxX: number; minZ: number; maxZ: number; y: number; color: string;
 }) {
   return (
-    <mesh position={[(minX + maxX) / 2, y, (minZ + maxZ) / 2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+    <mesh
+      position={[(minX + maxX) / 2, y, (minZ + maxZ) / 2]}
+      rotation={[-Math.PI / 2, 0, 0]}
+      receiveShadow
+      material={MATERIALS.ground(color)}
+     
+    >
       <planeGeometry args={[maxX - minX, maxZ - minZ]} />
-      <meshStandardMaterial color={color} roughness={0.95} />
     </mesh>
   );
 }
 
 type Stripe = { x: number; z: number; w: number; d: number };
 
+/** All markings of one colour in a single instanced draw. */
 function Stripes({ stripes, color }: { stripes: Stripe[]; color: string }) {
-  return (
-    <Instances limit={stripes.length} receiveShadow>
-      <boxGeometry args={[1, 0.02, 1]} />
-      <meshStandardMaterial color={color} roughness={0.7} />
-      {stripes.map((s, i) => (
-        <Instance key={i} position={[s.x, LINE_Y, s.z]} scale={[s.w, 1, s.d]} />
-      ))}
-    </Instances>
+  const items = useMemo(
+    () => stripes.map((s): InstanceSpec => ({ position: [s.x, LINE_Y, s.z], scale: [s.w, 0.02, s.d], color })),
+    [stripes, color],
   );
+  return <StaticInstances items={items} geometry={GEOMETRY.box} material={MATERIALS.instanced} receiveShadow />;
 }
 
 /** Grass, the highway joining every site, and the reference grid, in world coordinates. */
-export function WorldGround({ highway }: { highway: { minX: number; maxX: number } }) {
+export const WorldGround = memo(function WorldGround({ highway }: { highway: { minX: number; maxX: number } }) {
   const { yellow, white } = useMemo(() => {
     const length = highway.maxX - highway.minX;
     const centerX = (highway.minX + highway.maxX) / 2;
@@ -53,9 +57,8 @@ export function WorldGround({ highway }: { highway: { minX: number; maxX: number
 
   return (
     <group>
-      <mesh position={[centerX, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <mesh position={[centerX, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow material={MATERIALS.ground(COLORS.grass)}>
         <planeGeometry args={[span + 800, 800]} />
-        <meshStandardMaterial color={COLORS.grass} roughness={1} />
       </mesh>
       <Pad minX={highway.minX} maxX={highway.maxX} minZ={ROAD.z - ROAD.width / 2} maxZ={ROAD.z + ROAD.width / 2} y={0.012} color={COLORS.road} />
       <Grid
@@ -74,10 +77,10 @@ export function WorldGround({ highway }: { highway: { minX: number; maxX: number
       <Stripes stripes={white} color={COLORS.laneWhite} />
     </group>
   );
-}
+});
 
 /** One site's apron, yard and markings, in site coordinates. */
-export function SiteGround({ dockCount }: { dockCount: number }) {
+export const SiteGround = memo(function SiteGround({ dockCount }: { dockCount: number }) {
   const { yellow, white } = useMemo(() => {
     const yellow: Stripe[] = [];
     const white: Stripe[] = [];
@@ -110,4 +113,4 @@ export function SiteGround({ dockCount }: { dockCount: number }) {
       <Stripes stripes={white} color={COLORS.laneWhite} />
     </group>
   );
-}
+});

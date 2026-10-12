@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
+import { PerformanceMonitor } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
 import { seedData } from './data';
 import type { FilterResult } from './state/filters';
@@ -36,6 +37,14 @@ const LEGEND: [label: string, color: string][] = [
   ['Flex dock', DOCK_TYPE_COLOR.flex],
   ['Low stock', COLORS.cartonLow],
 ];
+
+/**
+ * Render resolution cap. Above 1.5× the extra pixels (each running soft-shadow
+ * sampling and 4× MSAA) cost far more than they show.
+ */
+const MAX_DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+/** Fog is opaque past 420 units, so nothing further needs drawing. */
+const CAMERA_FAR = 450;
 
 const SITES = seedData.sites.map(({ id, code, name, city }) => ({ id, code, name, city }));
 const dateFormat = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' });
@@ -123,11 +132,13 @@ function Inspector() {
 export function App() {
   const select = useLiveStore((s) => s.select);
   const labelElements = useRef<LabelElements>(new Map());
+  // Drops to 1× while the frame rate can't keep up, back up when it recovers.
+  const [dpr, setDpr] = useState(MAX_DPR);
   // The camera starts over the initially selected site; later moves are flights.
   const [initialCamera] = useState(() => ({
     fov: CAMERA.fov,
     near: 1,
-    far: 1200,
+    far: CAMERA_FAR,
     position: cameraPosition(siteStartTarget(selectFocusX(useLiveStore.getState())), CAMERA.startDistance),
   }));
 
@@ -143,7 +154,20 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas shadows dpr={[1, 2]} camera={initialCamera} onPointerMissed={() => select(null)}>
+      <Canvas
+        shadows
+        dpr={dpr}
+        // The effect composer does its own 4× MSAA; antialiasing the canvas too is wasted work.
+        gl={{ antialias: false, powerPreference: 'high-performance' }}
+        camera={initialCamera}
+        onPointerMissed={() => select(null)}
+      >
+        <PerformanceMonitor
+          onDecline={() => setDpr(1)}
+          onIncline={() => setDpr(MAX_DPR)}
+          onFallback={() => setDpr(1)}
+          flipflops={3}
+        />
         <LiveWorld labelElements={labelElements} />
       </Canvas>
       <LiveLabels labelElements={labelElements} />

@@ -17,7 +17,7 @@ export function isLate(s: Shipment): boolean {
 }
 
 /** Still to be delivered (not completed or cancelled). */
-export function isOpen(s: Shipment): boolean {
+function isOpen(s: Shipment): boolean {
   return s.status !== 'completed' && s.status !== 'cancelled';
 }
 
@@ -26,7 +26,9 @@ export function delayedShipments(data: WareTrackData): Shipment[] {
   return data.shipments.filter((s) => isOpen(s) && isLate(s)).sort((a, b) => minutesLate(b) - minutesLate(a));
 }
 
-/** The truck's most-delayed open shipment, if any is late. */
-export function delayedShipmentOf(data: WareTrackData, truck: Truck): Shipment | undefined {
-  return delayedShipments(data).find((s) => s.truckId === truck.id);
+/** Each truck's most-delayed open shipment, for trucks carrying a late one. */
+export function delayedByTruck(data: WareTrackData): Map<Truck['id'], Shipment> {
+  const byTruck = new Map<Truck['id'], Shipment>();
+  for (const s of delayedShipments(data)) if (s.truckId && !byTruck.has(s.truckId)) byTruck.set(s.truckId, s);
+  return byTruck;
 }

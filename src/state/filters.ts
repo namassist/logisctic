@@ -2,7 +2,7 @@
 import { activeShipmentForTruck, type SiteId, type Truck, type TruckStatus, type WareTrackData } from '../data';
 import type { TruckPlacement } from '../scene/layout';
 import { TRUCK_STATE, type StateBadge } from './details';
-import { delayedShipmentOf, minutesLate } from './ops';
+import { delayedByTruck, minutesLate } from './ops';
 
 export interface TruckFilters {
   /** Only trucks carrying a shipment that's running late. */
@@ -17,10 +17,10 @@ export function filtersActive(f: TruckFilters): boolean {
   return f.delayedOnly || f.status !== 'all';
 }
 
-export function truckMatches(data: WareTrackData, truck: Truck, f: TruckFilters): boolean {
-  if (f.status !== 'all' && truck.status !== f.status) return false;
-  if (f.delayedOnly && !delayedShipmentOf(data, truck)) return false;
-  return true;
+/** Predicate for the filters; delayed shipments are looked up once, not per truck. */
+export function truckMatcher(data: WareTrackData, f: TruckFilters): (truck: Truck) => boolean {
+  const delayed = f.delayedOnly ? delayedByTruck(data) : null;
+  return (truck) => (f.status === 'all' || truck.status === f.status) && (!delayed || delayed.has(truck.id));
 }
 
 export interface FilterResult {
@@ -44,10 +44,11 @@ export function filterResults(data: WareTrackData, placements: TruckPlacement[],
   if (!filtersActive(f)) return [];
   const drawn = new Map(placements.map((p) => [p.truck.id, p]));
   const codes = new Map(data.sites.map((s) => [s.id, s.code]));
+  const delayedOf = delayedByTruck(data);
   return data.trucks
-    .filter((t) => truckMatches(data, t, f))
+    .filter(truckMatcher(data, f))
     .map((truck): FilterResult => {
-      const delayed = delayedShipmentOf(data, truck);
+      const delayed = delayedOf.get(truck.id);
       const shipment = delayed ?? activeShipmentForTruck(data, truck.id) ?? null;
       const placement = drawn.get(truck.id);
       const offMapSite =

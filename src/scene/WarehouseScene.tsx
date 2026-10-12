@@ -23,7 +23,7 @@ const OUTLINE_COLOR = 0xf5a524;
 interface Props {
   world: WorldLayout;
   selection: EntityRef | null;
-  /** Box to outline for selections drawn with instancing (racks, stock). */
+  /** Box to outline for selections drawn with instancing (docks, racks, stock). */
   highlight: HighlightBox | null;
   onSelect: (ref: EntityRef) => void;
 }
@@ -93,7 +93,7 @@ export function WarehouseScene({ world, selection, highlight, onSelect }: Props)
         <group key={site.siteId} position={[site.originX, 0, 0]}>
           <SiteGround dockCount={site.docks.length} />
           <Building docks={site.docks} zones={site.zones} />
-          <Docks docks={site.docks} selection={selection} onSelect={onSelect} />
+          <Docks docks={site.docks} onSelect={onSelect} />
           <Shelving racks={site.racks} stock={site.stock} onSelect={onSelect} />
           <Decor seed={42 + i * 101} />
         </group>
@@ -102,7 +102,9 @@ export function WarehouseScene({ world, selection, highlight, onSelect }: Props)
       <Forklifts forklifts={world.forklifts} selection={selection} onSelect={onSelect} />
       {highlight && <OutlineBox box={highlight} />}
 
-      {/* The composer turns off renderer tone mapping, so it's re-applied as the last pass. */}
+      {/* The composer turns off renderer tone mapping, so it's re-applied as the last pass.
+          Outline stays mounted: it skips all of its passes while nothing is selected, and
+          mounting it on demand would rebuild the composer (a visible stall) on every pick. */}
       <EffectComposer multisampling={4} autoClear={false}>
         <Outline
           // Alpha keeps the amber readable over the light floor (the default screen blend washes it out).
@@ -110,8 +112,8 @@ export function WarehouseScene({ world, selection, highlight, onSelect }: Props)
           blur
           edgeStrength={8}
           visibleEdgeColor={OUTLINE_COLOR}
-          // Same colour for hidden edges: rack/stock outline boxes sit behind their own
-          // geometry, and a truck behind a wall should still read as selected.
+          // Same colour for hidden edges: outline boxes sit behind their own geometry,
+          // and a truck behind a wall should still read as selected.
           hiddenEdgeColor={OUTLINE_COLOR}
           width={1200}
         />

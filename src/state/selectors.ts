@@ -19,7 +19,7 @@ import {
   type WorldLayout,
 } from '../scene/layout';
 import { buildEntityDetails } from './details';
-import { filterResults, filtersActive, statusOptions, truckMatches, type TruckFilters } from './filters';
+import { filterResults, filtersActive, statusOptions, truckMatcher, type TruckFilters } from './filters';
 import { computeSiteKpis, kpiView } from './kpis';
 import { delayedShipments } from './ops';
 import type { LiveState } from './store';
@@ -65,9 +65,11 @@ const trucksFor = memoLast(layoutTrucks);
 const forkliftsFor = memoLast(layoutAllForklifts);
 
 /** Fade out trucks the filters exclude. */
-const filteredTrucksFor = memoLast((trucks: TruckPlacement[], data: LiveState['data'], filters: TruckFilters) =>
-  filtersActive(filters) ? trucks.map((p) => ({ ...p, dimmed: !truckMatches(data, p.truck, filters) })) : trucks,
-);
+const filteredTrucksFor = memoLast((trucks: TruckPlacement[], data: LiveState['data'], filters: TruckFilters) => {
+  if (!filtersActive(filters)) return trucks;
+  const matches = truckMatcher(data, filters);
+  return trucks.map((p) => ({ ...p, dimmed: !matches(p.truck) }));
+});
 const worldFor = memoLast(
   (sites: SiteScene[], trucks: TruckPlacement[], forklifts: WorldLayout['forklifts'], highway: WorldLayout['highway']): WorldLayout => ({
     sites,

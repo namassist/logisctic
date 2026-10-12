@@ -1,101 +1,63 @@
-import { memo } from 'react';
-import { Select } from '@react-three/postprocessing';
-import type { DockId } from '../data';
+import { memo, useMemo } from 'react';
 import type { EntityRef } from '../state/entities';
-import { useClickHandlers } from './interaction';
-import { BUILDING, FRONT_Z, type DockPlacement } from './layout';
+import { BUILDING, DOCK_OUTSIDE_Z, FRONT_Z, dockHitBox, type DockPlacement } from './layout';
 import { COLORS } from './palette';
+import { GEOMETRY, MATERIALS } from './resources';
+import { StaticInstances, type InstanceSpec } from './StaticInstances';
 
-const { doorHeight, wallThickness } = BUILDING;
-const OUTSIDE = FRONT_Z + wallThickness / 2;
-/** Clickable area: the doorway plus the sign above it. */
-const HIT_HEIGHT = doorHeight + 1.4;
+const { doorHeight } = BUILDING;
+const LAMP_OFF = '#3b4048';
 
 interface Props {
   docks: DockPlacement[];
-  selection: EntityRef | null;
   onSelect: (ref: EntityRef) => void;
 }
 
-export function Docks({ docks, selection, onSelect }: Props) {
+type DockHit = InstanceSpec & { ref: EntityRef };
+
+/**
+ * Every door fitting of one site, instanced by kind: shutters on closed doors,
+ * lamps (lit while a truck is worked), type signs, and hazard tape and cones
+ * at docks under maintenance. Clicks land on invisible per-dock hit boxes; the
+ * selected dock is outlined through the scene's highlight box.
+ */
+export const Docks = memo(function Docks({ docks, onSelect }: Props) {
+  const parts = useMemo(() => {
+    const shutters: InstanceSpec[] = [];
+    const lamps: InstanceSpec[] = [];
+    const signs: InstanceSpec[] = [];
+    const tape: InstanceSpec[] = [];
+    const cones: InstanceSpec[] = [];
+    const hits: DockHit[] = [];
+    for (const p of docks) {
+      const { x, doorWidth } = p;
+      if (!p.doorOpen) shutters.push({ position: [x, doorHeight / 2, FRONT_Z], scale: [doorWidth, doorHeight, 0.2], color: COLORS.shutter });
+      lamps.push({
+        position: [x, doorHeight + 0.25, DOCK_OUTSIDE_Z + 0.15],
+        scale: [doorWidth * 0.5, 0.12, 0.25],
+        color: p.doorOpen ? COLORS.doorwayGlow : LAMP_OFF,
+      });
+      signs.push({ position: [x, doorHeight + 0.95, DOCK_OUTSIDE_Z + 0.05], scale: [doorWidth * 0.7, 0.45, 0.08], color: p.signColor });
+      if (p.underMaintenance) {
+        tape.push({ position: [x, 1.1, DOCK_OUTSIDE_Z + 0.2], scale: [doorWidth + 0.4, 0.18, 0.1], color: COLORS.hazard });
+        for (const side of [-1, 1]) {
+          cones.push({ position: [x + side * (doorWidth / 2 + 0.3), 0.4, DOCK_OUTSIDE_Z + 1.5], scale: [1, 1, 1] });
+        }
+      }
+      const box = dockHitBox(p);
+      hits.push({ position: box.center, scale: box.size, ref: { kind: 'dock', id: p.dock.id } });
+    }
+    return { shutters, lamps, signs, tape, cones, hits };
+  }, [docks]);
+
   return (
     <group>
-      {docks.map((p) => (
-        <DockItem
-          key={p.dock.id}
-          id={p.dock.id}
-          x={p.x}
-          doorWidth={p.doorWidth}
-          doorOpen={p.doorOpen}
-          underMaintenance={p.underMaintenance}
-          signColor={p.signColor}
-          selected={selection?.kind === 'dock' && selection.id === p.dock.id}
-          onSelect={onSelect}
-        />
-      ))}
-    </group>
-  );
-}
-
-interface ItemProps {
-  id: DockId;
-  x: number;
-  doorWidth: number;
-  doorOpen: boolean;
-  underMaintenance: boolean;
-  signColor: string;
-  selected: boolean;
-  onSelect: (ref: EntityRef) => void;
-}
-
-/** Door (open and lit, or shutter down), type sign, and hazard tape when under maintenance. */
-const DockItem = memo(function DockItem({ id, x, doorWidth, doorOpen, underMaintenance, signColor, selected, onSelect }: ItemProps) {
-  const handlers = useClickHandlers();
-  return (
-    <group position={[x, 0, 0]} {...handlers(() => onSelect({ kind: 'dock', id }))}>
-      <Select enabled={selected}>
-        {/* Invisible hit area so an open doorway is still clickable */}
-        <mesh position={[0, HIT_HEIGHT / 2, OUTSIDE + 0.35]}>
-          <boxGeometry args={[doorWidth + 0.6, HIT_HEIGHT, 0.9]} />
-          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-        </mesh>
-
-        {!doorOpen && (
-          <mesh position={[0, doorHeight / 2, FRONT_Z]} castShadow receiveShadow>
-            <boxGeometry args={[doorWidth, doorHeight, 0.2]} />
-            <meshStandardMaterial color={COLORS.shutter} roughness={0.6} metalness={0.3} />
-          </mesh>
-        )}
-
-        <mesh position={[0, doorHeight + 0.25, OUTSIDE + 0.15]}>
-          <boxGeometry args={[doorWidth * 0.5, 0.12, 0.25]} />
-          <meshStandardMaterial
-            color={doorOpen ? COLORS.doorwayGlow : '#3b4048'}
-            emissive={doorOpen ? COLORS.doorwayGlow : '#000000'}
-            emissiveIntensity={doorOpen ? 2 : 0}
-          />
-        </mesh>
-
-        <mesh position={[0, doorHeight + 0.95, OUTSIDE + 0.05]}>
-          <boxGeometry args={[doorWidth * 0.7, 0.45, 0.08]} />
-          <meshStandardMaterial color={signColor} emissive={signColor} emissiveIntensity={0.5} />
-        </mesh>
-
-        {underMaintenance && (
-          <>
-            <mesh position={[0, 1.1, OUTSIDE + 0.2]} castShadow>
-              <boxGeometry args={[doorWidth + 0.4, 0.18, 0.1]} />
-              <meshStandardMaterial color={COLORS.hazard} emissive={COLORS.hazard} emissiveIntensity={0.4} />
-            </mesh>
-            {[-1, 1].map((side) => (
-              <mesh key={side} position={[side * (doorWidth / 2 + 0.3), 0.4, OUTSIDE + 1.5]} castShadow>
-                <coneGeometry args={[0.25, 0.8, 8]} />
-                <meshStandardMaterial color="#f97316" />
-              </mesh>
-            ))}
-          </>
-        )}
-      </Select>
+      <StaticInstances items={parts.shutters} geometry={GEOMETRY.box} material={MATERIALS.instanced} castShadow receiveShadow />
+      <StaticInstances items={parts.lamps} geometry={GEOMETRY.box} material={MATERIALS.glow} />
+      <StaticInstances items={parts.signs} geometry={GEOMETRY.box} material={MATERIALS.glow} />
+      <StaticInstances items={parts.tape} geometry={GEOMETRY.box} material={MATERIALS.glow} castShadow />
+      <StaticInstances items={parts.cones} geometry={GEOMETRY.cone} material={MATERIALS.cone} castShadow />
+      <StaticInstances items={parts.hits} geometry={GEOMETRY.box} material={MATERIALS.pickOnly} onPick={(h) => onSelect(h.ref)} />
     </group>
   );
 });

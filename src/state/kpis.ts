@@ -7,7 +7,7 @@
  *   on the road, out of the site's fleet.
  * - Low-stock alerts: SKUs at the site at or below their reorder point.
  */
-import type { InventoryItem, IsoDateTime, SiteId, WareTrackData } from '../data';
+import { shipmentsForSite, type InventoryItem, type IsoDateTime, type SiteId, type WareTrackData } from '../data';
 import type { Tone } from './details';
 import { formatNumber } from './format';
 import { isLate, ON_TIME_GRACE_MIN } from './ops';
@@ -23,10 +23,8 @@ export interface SiteKpis {
 
 export function computeSiteKpis(data: WareTrackData, siteId: SiteId, now: IsoDateTime): SiteKpis {
   const nowMs = Date.parse(now);
-  const touchesSite = (stop: { kind: string; siteId?: SiteId }) => stop.kind === 'site' && stop.siteId === siteId;
-
-  const delivered = data.shipments.filter((s) => {
-    if (!s.arrivedAt || !(touchesSite(s.origin) || touchesSite(s.destination))) return false;
+  const delivered = shipmentsForSite(data, siteId).filter((s) => {
+    if (!s.arrivedAt) return false;
     const age = nowMs - Date.parse(s.arrivedAt);
     return age >= 0 && age <= WINDOW_MS;
   });

@@ -4,11 +4,12 @@ import { Select } from '@react-three/postprocessing';
 import { Vector3, type Group } from 'three';
 import type { ForkliftId } from '../data';
 import type { EntityRef } from '../state/entities';
-import { useClickHandlers } from './interaction';
+import { useClickable } from './interaction';
 import type { ForkliftPlacement } from './layout';
 import { ForkliftModel } from './models/ForkliftModel';
 import { followAlpha, lerpAngle } from './motion';
-import { COLORS, FORKLIFT_STATUS_COLOR } from './palette';
+import { COLORS } from './palette';
+import { accentMaterial, GEOMETRY } from './resources';
 
 /** How far a working forklift shuttles back and forth along its forks. */
 const SHUTTLE_RANGE = 2.5;
@@ -63,7 +64,7 @@ const ForkliftItem = memo(function ForkliftItem(props: ItemProps) {
   // Eased spot the shuttle motion is centred on, and how much of it to apply.
   const base = useRef(new Vector3(x, 0, z));
   const amplitude = useRef(moving ? 1 : 0);
-  const handlers = useClickHandlers();
+  const handlers = useClickable(() => onSelect({ kind: 'forklift', id }));
 
   useFrame(({ clock }, dt) => {
     const g = group.current;
@@ -79,15 +80,19 @@ const ForkliftItem = memo(function ForkliftItem(props: ItemProps) {
   });
 
   return (
-    <group ref={group} position={initial.position} rotation={initial.rotation} {...handlers(() => onSelect({ kind: 'forklift', id }))}>
+    <group ref={group} position={initial.position} rotation={initial.rotation} {...handlers}>
       <Select enabled={selected}>
         <ForkliftModel accent={accent} carrying={carrying} />
         {charging && (
           // Wall charger beside the parking spot
-          <mesh position={[0.9, 0.6, 1.4]} castShadow>
-            <boxGeometry args={[0.5, 1.2, 0.4]} />
-            <meshStandardMaterial color={COLORS.forkliftMetal} emissive={FORKLIFT_STATUS_COLOR.charging} emissiveIntensity={0.15} />
-          </mesh>
+          <mesh
+            position={[0.9, 0.6, 1.4]}
+            scale={[0.5, 1.2, 0.4]}
+            geometry={GEOMETRY.box}
+            material={accentMaterial(COLORS.forkliftMetal)}
+            castShadow
+           
+          />
         )}
       </Select>
     </group>

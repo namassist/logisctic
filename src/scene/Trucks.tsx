@@ -4,7 +4,7 @@ import { Select } from '@react-three/postprocessing';
 import type { Group } from 'three';
 import type { TruckId, VehicleClass } from '../data';
 import type { EntityRef } from '../state/entities';
-import { useClickHandlers } from './interaction';
+import { useClickable } from './interaction';
 import type { TruckPlacement } from './layout';
 import { TruckModel } from './models/TruckModel';
 import { followAlpha, lerpAngle } from './motion';
@@ -54,7 +54,8 @@ const TruckItem = memo(function TruckItem({ id, vehicleClass, accent, x, z, rota
   const group = useRef<Group>(null);
   // Initial transform only; later placements are eased in useFrame.
   const initial = useRef({ position: [x, 0, z] as const, rotation: [0, rotation, 0] as const }).current;
-  const handlers = useClickHandlers();
+  // Ghosted trucks (excluded by the filters) are inert.
+  const handlers = useClickable(dimmed ? undefined : () => onSelect({ kind: 'truck', id }));
 
   useFrame((_, dt) => {
     const g = group.current;
@@ -66,9 +67,9 @@ const TruckItem = memo(function TruckItem({ id, vehicleClass, accent, x, z, rota
   });
 
   return (
-    <group ref={group} position={initial.position} rotation={initial.rotation} {...(dimmed ? {} : handlers(() => onSelect({ kind: 'truck', id })))}>
+    <group ref={group} position={initial.position} rotation={initial.rotation} {...handlers}>
       <Select enabled={selected}>
-        <TruckModel key={dimmed ? 'ghost' : 'solid'} vehicleClass={vehicleClass} accent={accent} ghost={dimmed} />
+        <TruckModel vehicleClass={vehicleClass} accent={accent} ghost={dimmed} />
       </Select>
     </group>
   );

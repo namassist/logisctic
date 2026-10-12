@@ -18,6 +18,7 @@ import {
   forkliftsAtSite,
   inventoryAtSite,
   transitProgress,
+  truckAtDock,
 } from '../data';
 import type {
   Dock,
@@ -68,7 +69,7 @@ const APPROACH_SPAN = 120;
 const VISIBLE_REACH = 100;
 
 /** Distance between neighbouring sites along the highway. */
-export const SITE_SPACING = 280;
+const SITE_SPACING = 280;
 
 /** Extent of the playable map; the camera view is kept inside it. */
 export const MAP_BOUNDS = { minX: -62, maxX: 76, minZ: -40, maxZ: 74 } as const;
@@ -89,7 +90,12 @@ export const TRUCK_SIZE: Record<VehicleClass, { length: number; width: number; h
   heavy: { length: 11.5, width: 2.5, height: 3.8 },
 };
 
-export const DOOR_WIDTH: Record<VehicleClass, number> = { light: 3.2, medium: 3.6, heavy: 4 };
+const DOOR_WIDTH: Record<VehicleClass, number> = { light: 3.2, medium: 3.6, heavy: 4 };
+
+/** Front face of the dock wall, where door fittings are mounted. */
+export const DOCK_OUTSIDE_Z = FRONT_Z + BUILDING.wallThickness / 2;
+/** A dock's clickable (and outlined) area: the doorway plus the sign above it. */
+const DOCK_HIT = { height: BUILDING.doorHeight + 1.4, depth: 0.9, margin: 0.6 } as const;
 
 
 const YARD_SLOTS = YARD_SLOT.perRow * 2;
@@ -199,11 +205,11 @@ export interface HighlightBox {
 
 // ── Geometry helpers ───────────────────────────────────────────────────────
 
-export function dockX(dock: Dock, dockCount: number): number {
+function dockX(dock: Dock, dockCount: number): number {
   return (dock.number - (dockCount + 1) / 2) * DOCK_SPACING;
 }
 
-export function zoneRect(zone: string): ZonePlacement {
+function zoneRect(zone: string): ZonePlacement {
   const row = zone.charCodeAt(0) - 'A'.charCodeAt(0); // A = back row
   const col = Number(zone.slice(1)) - 1; // 1 = left
   const minX = -HALF_W + ZONE.sideMargin + col * (ZONE.width + ZONE.gapX);
@@ -223,8 +229,7 @@ const RACK_HEIGHT = RACK.levels * RACK.levelHeight;
 export function layoutDocks(data: WareTrackData, siteId: SiteId): DockPlacement[] {
   const siteDocks = docksAtSite(data, siteId).sort((a, b) => a.number - b.number);
   return siteDocks.map((dock) => {
-    const occupiedBy =
-      data.trucks.find((t) => t.position.kind === 'dock' && t.position.dockId === dock.id) ?? null;
+    const occupiedBy = truckAtDock(data, dock.id) ?? null;
     return {
       dock,
       x: dockX(dock, siteDocks.length),
@@ -342,7 +347,7 @@ export function layoutTrucks(data: WareTrackData, now: IsoDateTime, origins: Map
  * Forklifts work the dock they're assigned to, or the aisle of their putaway
  * job; the rest park along the left wall, each in its own bay.
  */
-export function layoutForklifts(
+function layoutForklifts(
   data: WareTrackData,
   siteId: SiteId,
   tasks: SimState['tasks'] = {},
@@ -436,31 +441,31 @@ export function layoutAllForklifts(
   });
 }
 
-export function buildWorldLayout(data: WareTrackData, now: IsoDateTime, tasks: SimState['tasks'] = {}): WorldLayout {
-  const origins = siteOrigins(data.sites);
+/** A dock's hit/outline box, in site coordinates. */
+export function dockHitBox(p: DockPlacement): HighlightBox {
   return {
-    sites: data.sites.map((site) => ({
-      siteId: site.id,
-      originX: origins.get(site.id)!,
-      docks: layoutDocks(data, site.id),
-      ...layoutShelving(data.inventory, site.id),
-    })),
-    trucks: layoutTrucks(data, now, origins),
-    forklifts: layoutAllForklifts(data, tasks, origins),
-    highway: highwayExtent(origins),
+    center: [p.x, DOCK_HIT.height / 2, DOCK_OUTSIDE_Z + 0.35],
+    size: [p.doorWidth + DOCK_HIT.margin, DOCK_HIT.height, DOCK_HIT.depth],
   };
 }
 
-/** Outline box for a selected rack or stock item; null for anything else. */
-export function highlightBox(shelving: ShelvingLayout, ref: EntityRef | null): HighlightBox | null {
+/**
+ * Outline box for a selection drawn with instancing (dock, rack, stock item),
+ * in site coordinates; null for anything else.
+ */
+export function highlightBox(site: SiteScene, ref: EntityRef | null): HighlightBox | null {
   const pad = 0.25;
+  if (ref?.kind === 'dock') {
+    const dock = site.docks.find((d) => d.dock.id === ref.id);
+    return dock ? dockHitBox(dock) : null;
+  }
   if (ref?.kind === 'rack') {
-    const rack = shelving.racks.find((r) => r.key === ref.id);
+    const rack = site.racks.find((r) => r.key === ref.id);
     if (!rack) return null;
     return { center: [rack.x, RACK_HEIGHT / 2, rack.z], size: [RACK.depth + pad, RACK_HEIGHT + pad, rack.length + pad] };
   }
   if (ref?.kind === 'item') {
-    const s = shelving.stock.find((st) => st.item.id === ref.id);
+    const s = site.stock.find((st) => st.item.id === ref.id);
     if (!s) return null;
     const rackZ = (zoneRect(s.item.bin.zone).minZ + zoneRect(s.item.bin.zone).maxZ) / 2;
     const [zMin, zMax] = s.bayZs.length

@@ -5,6 +5,9 @@
  */
 import {
   ACTIVE_SHIPMENT_STATUSES,
+  forkliftsAtDock,
+  shipmentsForTruck,
+  truckAtDock,
   shipmentWeightKg,
   type Dock,
   type DockId,
@@ -21,6 +24,7 @@ import {
   type TruckStatus,
   type WareTrackData,
 } from '../data';
+import { RACK } from '../scene/layout';
 import { workProgress, type SimState } from '../sim/simulation';
 import { entityKey, parseRackId, type EntityKey, type EntityRef } from './entities';
 import { formatClock, formatNumber, formatWhen } from './format';
@@ -199,7 +203,7 @@ function lastUpdate(input: DetailsInput, keys: EntityKey[]): IsoDateTime {
 
 function truckDetails(input: DetailsInput, truck: Truck): Omit<EntityDetails, 'key' | 'updatedAt' | 'updatedLabel'> {
   const { data } = input;
-  const found = currentOrNext(data.shipments.filter((s) => s.truckId === truck.id));
+  const found = currentOrNext(shipmentsForTruck(data, truck.id));
   const pos = truck.position;
   const location =
     pos.kind === 'dock'
@@ -229,10 +233,8 @@ function forkliftDetails(input: DetailsInput, forklift: Forklift): Omit<EntityDe
   const { data, now, sim } = input;
   const task = forklift.status === 'active' ? sim.tasks[forklift.id] : undefined;
   const taskItem = task && data.inventory.find((i) => i.id === task.itemId);
-  const dockTruck =
-    forklift.assignedDockId &&
-    data.trucks.find((t) => t.position.kind === 'dock' && t.position.dockId === forklift.assignedDockId);
-  const found = dockTruck ? currentOrNext(data.shipments.filter((s) => s.truckId === dockTruck.id)) : null;
+  const dockTruck = forklift.assignedDockId ? truckAtDock(data, forklift.assignedDockId) : undefined;
+  const found = dockTruck ? currentOrNext(shipmentsForTruck(data, dockTruck.id)) : null;
 
   const state: StateBadge =
     forklift.status === 'active' && forklift.assignedDockId
@@ -267,13 +269,13 @@ function forkliftDetails(input: DetailsInput, forklift: Forklift): Omit<EntityDe
 
 function dockDetails(input: DetailsInput, dock: Dock): Omit<EntityDetails, 'key' | 'updatedAt' | 'updatedLabel'> {
   const { data } = input;
-  const truck = data.trucks.find((t) => t.position.kind === 'dock' && t.position.dockId === dock.id);
-  const forklifts = data.forklifts.filter((f) => f.assignedDockId === dock.id);
+  const truck = truckAtDock(data, dock.id);
+  const forklifts = forkliftsAtDock(data, dock.id);
   const usesDock = (s: Shipment) =>
     (s.origin.kind === 'site' && s.origin.dockId === dock.id) ||
     (s.destination.kind === 'site' && s.destination.dockId === dock.id);
   const found = truck
-    ? currentOrNext(data.shipments.filter((s) => s.truckId === truck.id))
+    ? currentOrNext(shipmentsForTruck(data, truck.id))
     : currentOrNext(data.shipments.filter((s) => s.status === 'scheduled' && usesDock(s)));
 
   const state: StateBadge =
@@ -347,7 +349,7 @@ function rackDetails(input: DetailsInput, id: string): Omit<EntityDetails, 'key'
     fields: [
       { label: 'Zone', value: zone },
       { label: 'Aisle', value: pad2(aisle) },
-      { label: 'Levels in use', value: `${new Set(items.map((i) => i.bin.level)).size} of 4` },
+      { label: 'Levels in use', value: `${new Set(items.map((i) => i.bin.level)).size} of ${RACK.levels}` },
     ],
     list: {
       heading: 'Contents',
