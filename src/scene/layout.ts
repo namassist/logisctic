@@ -5,8 +5,12 @@
  * components just render what this returns.
  *
  * World axes: x → right, y → up, z → towards the dock side. 1 unit ≈ 1 m.
- * The warehouse sits at the origin with its docks on the +z wall; the apron
- * and access road are further +z and the truck yard is to the +x side.
+ * Each site is laid out in its own frame — warehouse at the origin, docks on
+ * the +z wall, apron and road further +z, truck yard to the +x side — and the
+ * sites sit side by side along x (SITE_SPACING apart), joined by one highway.
+ * Docks and racking stay in site coordinates (drawn inside a group at the
+ * site's origin); trucks and forklifts get world coordinates because trucks
+ * travel between sites.
  */
 import {
   activeShipmentForTruck,
@@ -14,7 +18,6 @@ import {
   forkliftsAtSite,
   inventoryAtSite,
   transitProgress,
-  trucksAtSite,
 } from '../data';
 import type {
   Dock,
@@ -22,6 +25,7 @@ import type {
   InventoryItem,
   IsoDateTime,
   Shipment,
+  Site,
   SiteId,
   Truck,
   VehicleClass,
@@ -58,8 +62,13 @@ export const YARD_SLOT = { firstX: 40, width: 5, perRow: 5, firstZ: 4, rowGap: 1
 
 /** Where in-transit trucks turn off the road into the apron. */
 const GATE_X = 26;
-/** Road length that stands in for a whole trip when placing approaching trucks. */
+/** Road length that stands in for a whole trip to or from an outside party. */
 const APPROACH_SPAN = 120;
+/** Trucks further than this from the gate (on such trips) are out of view. */
+const VISIBLE_REACH = 100;
+
+/** Distance between neighbouring sites along the highway. */
+export const SITE_SPACING = 280;
 
 /** Extent of the playable map; the camera view is kept inside it. */
 export const MAP_BOUNDS = { minX: -62, maxX: 76, minZ: -40, maxZ: 74 } as const;
@@ -99,13 +108,18 @@ export interface DockPlacement {
 
 export interface TruckPlacement {
   truck: Truck;
+  /** World coordinates. */
   x: number;
   z: number;
   /** Rotation about y; 0 = cab pointing +z. */
   rotation: number;
   where: 'dock' | 'yard' | 'road';
+  /** Site the truck is at, or nearest to on the highway. */
+  siteId: SiteId;
   shipment: Shipment | null;
   accent: string;
+  /** Faded out by the active filters. */
+  dimmed: boolean;
 }
 
 export interface ForkliftPlacement {
@@ -160,11 +174,21 @@ export interface ShelvingLayout {
   stock: StockPlacement[];
 }
 
-export interface SiteLayout extends ShelvingLayout {
+/** Static-ish structure of one site, in site coordinates. */
+export interface SiteScene extends ShelvingLayout {
   siteId: SiteId;
+  /** World x of the site's origin. */
+  originX: number;
   docks: DockPlacement[];
+}
+
+export interface WorldLayout {
+  sites: SiteScene[];
+  /** World coordinates. */
   trucks: TruckPlacement[];
+  /** World coordinates. */
   forklifts: ForkliftPlacement[];
+  highway: { minX: number; maxX: number };
 }
 
 /** Box drawn around a selection that has no mesh of its own (instanced racks and stock). */
@@ -213,65 +237,105 @@ export function layoutDocks(data: WareTrackData, siteId: SiteId): DockPlacement[
   });
 }
 
+/** World x of each site's origin, centred on 0, in data order (west to east). */
+export function siteOrigins(sites: Site[]): Map<SiteId, number> {
+  return new Map(sites.map((site, i) => [site.id, (i - (sites.length - 1) / 2) * SITE_SPACING]));
+}
+
+export function highwayExtent(origins: Map<SiteId, number>): WorldLayout['highway'] {
+  const xs = [...origins.values()];
+  return { minX: Math.min(...xs) + ROAD.minX - 30, maxX: Math.max(...xs) + ROAD.maxX + 30 };
+}
+
+function nearestSite(origins: Map<SiteId, number>, x: number): SiteId {
+  let best: SiteId | undefined;
+  for (const [siteId, ox] of origins) {
+    if (best === undefined || Math.abs(x - ox) < Math.abs(x - origins.get(best)!)) best = siteId;
+  }
+  return best!;
+}
+
 /**
- * Trucks at a dock back onto the door; trucks in the yard keep a stable slot;
- * trucks travelling to or from the site are drawn on the access road, placed
- * by how far along their trip they are.
+ * Trucks at a dock back onto the door; trucks in a yard keep a stable slot;
+ * trucks on the road are drawn on the highway. Between two of our sites they
+ * are placed by trip progress between the gates; to or from an outside party
+ * they leave or approach the gate on the side the party lies on, and are
+ * out of view once far enough away.
  */
-export function layoutTrucks(data: WareTrackData, siteId: SiteId, now: IsoDateTime): TruckPlacement[] {
-  const siteDocks = docksAtSite(data, siteId);
-  const dockById = new Map(siteDocks.map((d) => [d.id, d]));
-  const trucks: TruckPlacement[] = [];
-  const usedSlots = new Set<number>();
+export function layoutTrucks(data: WareTrackData, now: IsoDateTime, origins: Map<SiteId, number>): TruckPlacement[] {
+  const docks = new Map(data.docks.map((d) => [d.id, d]));
+  const dockCount = new Map<SiteId, number>();
+  for (const d of data.docks) dockCount.set(d.siteId, (dockCount.get(d.siteId) ?? 0) + 1);
+  const sites = new Map(data.sites.map((s) => [s.id, s]));
+  const usedSlots = new Map<SiteId, Set<number>>();
+  const gate = (siteId: SiteId) => origins.get(siteId)! + GATE_X;
+  const placements: TruckPlacement[] = [];
 
-  for (const truck of trucksAtSite(data, siteId)) {
+  data.trucks.forEach((truck, index) => {
+    const pos = truck.position;
     const shipment = activeShipmentForTruck(data, truck.id) ?? null;
-    const accent = TRUCK_STATUS_COLOR[truck.status];
     const { length } = TRUCK_SIZE[truck.vehicleClass];
-    if (truck.position.kind === 'dock') {
-      const x = dockX(dockById.get(truck.position.dockId)!, siteDocks.length);
-      trucks.push({ truck, x, z: FRONT_Z + 0.5 + length / 2, rotation: 0, where: 'dock', shipment, accent });
-      continue;
-    }
-    // Each truck prefers the same slot every time, so the yard doesn't reshuffle.
-    let slot = data.trucks.indexOf(truck) % YARD_SLOTS;
-    while (usedSlots.has(slot) && usedSlots.size < YARD_SLOTS) slot = (slot + 1) % YARD_SLOTS;
-    usedSlots.add(slot);
-    trucks.push({
-      truck,
-      x: YARD_SLOT.firstX + (slot % YARD_SLOT.perRow) * YARD_SLOT.width,
-      z: YARD_SLOT.firstZ + Math.floor(slot / YARD_SLOT.perRow) * YARD_SLOT.rowGap + length / 2,
-      rotation: 0,
-      where: 'yard',
-      shipment,
-      accent,
-    });
-  }
+    const base = { truck, shipment, accent: TRUCK_STATUS_COLOR[truck.status], dimmed: false };
 
-  for (const shipment of data.shipments) {
-    if (shipment.status !== 'in_transit' || !shipment.truckId) continue;
-    const inbound = shipment.destination.kind === 'site' && shipment.destination.siteId === siteId;
-    const outbound = shipment.origin.kind === 'site' && shipment.origin.siteId === siteId;
-    if (!inbound && !outbound) continue;
-    const truck = data.trucks.find((t) => t.id === shipment.truckId);
-    if (!truck) continue;
+    if (pos.kind === 'dock') {
+      const dock = docks.get(pos.dockId)!;
+      const x = origins.get(dock.siteId)! + dockX(dock, dockCount.get(dock.siteId)!);
+      placements.push({ ...base, x, z: FRONT_Z + 0.5 + length / 2, rotation: 0, where: 'dock', siteId: dock.siteId });
+      return;
+    }
+
+    if (pos.kind === 'yard') {
+      // Each truck prefers the same slot every time, so the yard doesn't reshuffle.
+      const used = usedSlots.get(pos.siteId) ?? new Set<number>();
+      usedSlots.set(pos.siteId, used);
+      let slot = index % YARD_SLOTS;
+      while (used.has(slot) && used.size < YARD_SLOTS) slot = (slot + 1) % YARD_SLOTS;
+      used.add(slot);
+      placements.push({
+        ...base,
+        x: origins.get(pos.siteId)! + YARD_SLOT.firstX + (slot % YARD_SLOT.perRow) * YARD_SLOT.width,
+        z: YARD_SLOT.firstZ + Math.floor(slot / YARD_SLOT.perRow) * YARD_SLOT.rowGap + length / 2,
+        rotation: 0,
+        where: 'yard',
+        siteId: pos.siteId,
+      });
+      return;
+    }
+
+    if (!shipment) return;
     const progress = transitProgress(shipment, now);
-    const { length } = TRUCK_SIZE[truck.vehicleClass];
-    const x = inbound
-      ? Math.max(ROAD.minX + length, GATE_X - (1 - progress) * APPROACH_SPAN)
-      : GATE_X + progress * APPROACH_SPAN;
-    if (x > ROAD.maxX - length / 2) continue; // already well down the road
-    trucks.push({
-      truck,
+    const { origin, destination } = shipment;
+    let x: number;
+    let direction: number;
+    if (origin.kind === 'site' && destination.kind === 'site') {
+      const from = gate(origin.siteId);
+      const to = gate(destination.siteId);
+      x = from + (to - from) * progress;
+      direction = Math.sign(to - from) || 1;
+    } else if (origin.kind === 'site' && destination.kind === 'external') {
+      direction = Math.sign(destination.coordinates.lng - sites.get(origin.siteId)!.coordinates.lng) || 1;
+      const travelled = progress * APPROACH_SPAN;
+      if (travelled > VISIBLE_REACH) return;
+      x = gate(origin.siteId) + direction * travelled;
+    } else if (origin.kind === 'external' && destination.kind === 'site') {
+      direction = Math.sign(sites.get(destination.siteId)!.coordinates.lng - origin.coordinates.lng) || 1;
+      const remaining = (1 - progress) * APPROACH_SPAN;
+      if (remaining > VISIBLE_REACH) return;
+      x = gate(destination.siteId) - direction * remaining;
+    } else {
+      return;
+    }
+    // Eastbound traffic uses the lane nearer the sites.
+    placements.push({
+      ...base,
       x,
-      z: ROAD.z - ROAD.width / 4,
-      rotation: Math.PI / 2,
+      z: ROAD.z - (direction * ROAD.width) / 4,
+      rotation: (direction * Math.PI) / 2,
       where: 'road',
-      shipment,
-      accent: TRUCK_STATUS_COLOR[truck.status],
+      siteId: nearestSite(origins, x),
     });
-  }
-  return trucks;
+  });
+  return placements;
 }
 
 /**
@@ -360,18 +424,30 @@ export function layoutShelving(inventory: InventoryItem[], siteId: SiteId): Shel
   return { zones, racks, stock };
 }
 
-export function buildSiteLayout(
+/** Forklifts of every site, moved into world coordinates. */
+export function layoutAllForklifts(
   data: WareTrackData,
-  siteId: SiteId,
-  now: IsoDateTime,
-  tasks: SimState['tasks'] = {},
-): SiteLayout {
+  tasks: SimState['tasks'],
+  origins: Map<SiteId, number>,
+): ForkliftPlacement[] {
+  return data.sites.flatMap((site) => {
+    const ox = origins.get(site.id)!;
+    return layoutForklifts(data, site.id, tasks).map((p) => ({ ...p, x: p.x + ox }));
+  });
+}
+
+export function buildWorldLayout(data: WareTrackData, now: IsoDateTime, tasks: SimState['tasks'] = {}): WorldLayout {
+  const origins = siteOrigins(data.sites);
   return {
-    siteId,
-    docks: layoutDocks(data, siteId),
-    trucks: layoutTrucks(data, siteId, now),
-    forklifts: layoutForklifts(data, siteId, tasks),
-    ...layoutShelving(data.inventory, siteId),
+    sites: data.sites.map((site) => ({
+      siteId: site.id,
+      originX: origins.get(site.id)!,
+      docks: layoutDocks(data, site.id),
+      ...layoutShelving(data.inventory, site.id),
+    })),
+    trucks: layoutTrucks(data, now, origins),
+    forklifts: layoutAllForklifts(data, tasks, origins),
+    highway: highwayExtent(origins),
   };
 }
 

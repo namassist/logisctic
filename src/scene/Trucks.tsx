@@ -27,6 +27,7 @@ export function Trucks({ trucks, selection, onSelect }: Props) {
           x={p.x}
           z={p.z}
           rotation={p.rotation}
+          dimmed={p.dimmed}
           selected={selection?.kind === 'truck' && selection.id === p.truck.id}
           onSelect={onSelect}
         />
@@ -42,12 +43,14 @@ interface ItemProps {
   x: number;
   z: number;
   rotation: number;
+  /** Excluded by the filters: drawn as a ghost and not clickable. */
+  dimmed: boolean;
   selected: boolean;
   onSelect: (ref: EntityRef) => void;
 }
 
 /** Drives smoothly to each new placement instead of jumping. */
-const TruckItem = memo(function TruckItem({ id, vehicleClass, accent, x, z, rotation, selected, onSelect }: ItemProps) {
+const TruckItem = memo(function TruckItem({ id, vehicleClass, accent, x, z, rotation, dimmed, selected, onSelect }: ItemProps) {
   const group = useRef<Group>(null);
   // Initial transform only; later placements are eased in useFrame.
   const initial = useRef({ position: [x, 0, z] as const, rotation: [0, rotation, 0] as const }).current;
@@ -63,9 +66,9 @@ const TruckItem = memo(function TruckItem({ id, vehicleClass, accent, x, z, rota
   });
 
   return (
-    <group ref={group} position={initial.position} rotation={initial.rotation} {...handlers(() => onSelect({ kind: 'truck', id }))}>
+    <group ref={group} position={initial.position} rotation={initial.rotation} {...(dimmed ? {} : handlers(() => onSelect({ kind: 'truck', id })))}>
       <Select enabled={selected}>
-        <TruckModel vehicleClass={vehicleClass} accent={accent} />
+        <TruckModel key={dimmed ? 'ghost' : 'solid'} vehicleClass={vehicleClass} accent={accent} ghost={dimmed} />
       </Select>
     </group>
   );

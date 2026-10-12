@@ -33,6 +33,8 @@ export function LabelLayer({ labels, elements }: { labels: SceneLabel[]; element
 }
 
 const projected = new Vector3();
+/** Labels further than this from the camera (e.g. at other sites) are hidden. */
+const MAX_LABEL_DISTANCE = 260;
 
 /**
  * Lives inside the Canvas and pins each overlay element to its 3D anchor.
@@ -60,7 +62,11 @@ export function LabelProjector({ labels, elements }: { labels: SceneLabel[]; ele
       anchor.y += (label.position[1] - anchor.y) * a;
       anchor.z += (label.position[2] - anchor.z) * a;
       projected.copy(anchor).project(camera);
-      const visible = projected.z < 1 && Math.abs(projected.x) < 1.2 && Math.abs(projected.y) < 1.2;
+      const visible =
+        projected.z < 1 &&
+        Math.abs(projected.x) < 1.2 &&
+        Math.abs(projected.y) < 1.2 &&
+        camera.position.distanceTo(anchor) < MAX_LABEL_DISTANCE;
       el.style.visibility = visible ? 'visible' : 'hidden';
       if (!visible) continue;
       const x = ((projected.x + 1) / 2) * size.width;

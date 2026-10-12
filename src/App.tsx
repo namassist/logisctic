@@ -1,26 +1,44 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { seedData } from './data';
+import type { FilterResult } from './state/filters';
 import { formatClock } from './state/format';
-import { selectDetails, selectHighlight, selectLabels, selectSiteLayout, selectSiteStats } from './state/selectors';
+import {
+  selectDelayedCount,
+  selectDetails,
+  selectFilterResults,
+  selectFocusX,
+  selectHighlight,
+  selectLabels,
+  selectSiteKpis,
+  selectStatusOptions,
+  selectWorldLayout,
+} from './state/selectors';
 import { startSimulation, useLiveStore } from './state/store';
 import { LabelLayer, LabelProjector, type LabelElements } from './scene/LabelLayer';
 import { COLORS, DOCK_TYPE_COLOR, FORKLIFT_STATUS_COLOR, TRUCK_STATUS_COLOR } from './scene/palette';
-import { CAMERA, StrategyCamera, cameraPosition } from './scene/StrategyCamera';
+import { CAMERA, StrategyCamera, cameraPosition, siteStartTarget } from './scene/StrategyCamera';
 import { WarehouseScene } from './scene/WarehouseScene';
+import { FilterPanel } from './ui/FilterPanel';
 import { InspectorPanel } from './ui/InspectorPanel';
+import { KpiPanel } from './ui/KpiPanel';
+import { StatusBar } from './ui/StatusBar';
+import { TopBar } from './ui/TopBar';
 
 const LEGEND: [label: string, color: string][] = [
-  ['Truck (active)', TRUCK_STATUS_COLOR.loading],
-  ['Truck (idle)', TRUCK_STATUS_COLOR.idle],
+  ['Truck active', TRUCK_STATUS_COLOR.loading],
+  ['Truck idle', TRUCK_STATUS_COLOR.idle],
   ['Maintenance', TRUCK_STATUS_COLOR.maintenance],
-  ['Forklift (active)', FORKLIFT_STATUS_COLOR.active],
-  ['Forklift (charging)', FORKLIFT_STATUS_COLOR.charging],
+  ['Forklift active', FORKLIFT_STATUS_COLOR.active],
+  ['Charging', FORKLIFT_STATUS_COLOR.charging],
   ['Inbound dock', DOCK_TYPE_COLOR.inbound],
   ['Outbound dock', DOCK_TYPE_COLOR.outbound],
   ['Flex dock', DOCK_TYPE_COLOR.flex],
   ['Low stock', COLORS.cartonLow],
 ];
+
+const SITES = seedData.sites.map(({ id, code, name, city }) => ({ id, code, name, city }));
+const dateFormat = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' });
 
 /*
  * Connected components: each subscribes to the store slice it shows, so a
@@ -28,16 +46,17 @@ const LEGEND: [label: string, color: string][] = [
  * remounted.
  */
 
-function LiveWarehouse({ labelElements }: { labelElements: RefObject<LabelElements> }) {
-  const siteId = useLiveStore((s) => s.siteId);
-  const layout = useLiveStore(selectSiteLayout);
+function LiveWorld({ labelElements }: { labelElements: RefObject<LabelElements> }) {
+  const world = useLiveStore(selectWorldLayout);
   const labels = useLiveStore(selectLabels);
   const selection = useLiveStore((s) => s.selection);
   const highlight = useLiveStore(selectHighlight);
+  const focusX = useLiveStore(selectFocusX);
   const select = useLiveStore((s) => s.select);
   return (
     <>
-      <WarehouseScene key={siteId} layout={layout} selection={selection} highlight={highlight} onSelect={select} />
+      <WarehouseScene world={world} selection={selection} highlight={highlight} onSelect={select} />
+      <StrategyCamera focusX={focusX} />
       <LabelProjector labels={labels} elements={labelElements} />
     </>
   );
@@ -48,28 +67,50 @@ function LiveLabels({ labelElements }: { labelElements: RefObject<LabelElements>
   return <LabelLayer labels={labels} elements={labelElements} />;
 }
 
-function SiteStats() {
-  const stats = useLiveStore(selectSiteStats);
+function LiveTopBar() {
+  const siteId = useLiveStore((s) => s.siteId);
+  const setSite = useLiveStore((s) => s.setSite);
+  const now = useLiveStore((s) => s.now);
   return (
-    <aside className="hud hud--panel hud--stats">
-      {stats.map(([label, value]) => (
-        <div key={label} className="stat">
-          <span className="stat__label">{label}</span>
-          <span className="stat__value">{value}</span>
-        </div>
-      ))}
-    </aside>
+    <TopBar
+      sites={SITES}
+      activeId={siteId}
+      onSelectSite={setSite}
+      clock={formatClock(now)}
+      date={dateFormat.format(new Date(now))}
+    />
   );
 }
 
-function SimClock() {
-  const now = useLiveStore((s) => s.now);
+function LiveKpis() {
+  const view = useLiveStore(selectSiteKpis);
+  const siteId = useLiveStore((s) => s.siteId);
+  const select = useLiveStore((s) => s.select);
+  const site = SITES.find((s) => s.id === siteId)!;
+  return <KpiPanel siteName={`${site.code} · ${site.city}`} view={view} onPickItem={(id) => select({ kind: 'item', id })} />;
+}
+
+function LiveFilters() {
+  const filters = useLiveStore((s) => s.filters);
+  const setFilters = useLiveStore((s) => s.setFilters);
+  const options = useLiveStore(selectStatusOptions);
+  const delayedCount = useLiveStore(selectDelayedCount);
+  const results = useLiveStore(selectFilterResults);
+  const select = useLiveStore((s) => s.select);
+  const setSite = useLiveStore((s) => s.setSite);
+  const pick = (row: FilterResult) => {
+    select({ kind: 'truck', id: row.truckId });
+    setSite(row.siteId); // fly to where the truck is
+  };
   return (
-    <div className="clock" title="Simulated time (60× real time)">
-      <span className="live-dot" />
-      Live
-      <span className="clock__time">{formatClock(now)}</span>
-    </div>
+    <FilterPanel
+      filters={filters}
+      onChange={setFilters}
+      statusOptions={options}
+      delayedCount={delayedCount}
+      results={results}
+      onPickResult={pick}
+    />
   );
 }
 
@@ -80,11 +121,15 @@ function Inspector() {
 }
 
 export function App() {
-  const siteId = useLiveStore((s) => s.siteId);
-  const setSite = useLiveStore((s) => s.setSite);
   const select = useLiveStore((s) => s.select);
   const labelElements = useRef<LabelElements>(new Map());
-  const site = seedData.sites.find((s) => s.id === siteId)!;
+  // The camera starts over the initially selected site; later moves are flights.
+  const [initialCamera] = useState(() => ({
+    fov: CAMERA.fov,
+    near: 1,
+    far: 1200,
+    position: cameraPosition(siteStartTarget(selectFocusX(useLiveStore.getState())), CAMERA.startDistance),
+  }));
 
   useEffect(() => startSimulation(), []);
 
@@ -98,59 +143,19 @@ export function App() {
 
   return (
     <div className="app">
-      <Canvas
-        shadows
-        dpr={[1, 2]}
-        camera={{
-          fov: CAMERA.fov,
-          near: 1,
-          far: 900,
-          position: cameraPosition(CAMERA.startTarget, CAMERA.startDistance),
-        }}
-        onPointerMissed={() => select(null)}
-      >
-        <LiveWarehouse labelElements={labelElements} />
-        <StrategyCamera />
+      <Canvas shadows dpr={[1, 2]} camera={initialCamera} onPointerMissed={() => select(null)}>
+        <LiveWorld labelElements={labelElements} />
       </Canvas>
       <LiveLabels labelElements={labelElements} />
 
-      <header className="hud hud--top">
-        <div className="brand">
-          <span className="brand__mark" />
-          <div>
-            <div className="brand__name">WareTrack</div>
-            <div className="brand__sub">{site.name}</div>
-          </div>
-        </div>
-        <div className="hud__right">
-          <SimClock />
-          <nav className="sites">
-            {seedData.sites.map((s) => (
-              <button
-                key={s.id}
-                className={s.id === siteId ? 'sites__tab sites__tab--active' : 'sites__tab'}
-                onClick={() => setSite(s.id)}
-              >
-                {s.code} · {s.city}
-              </button>
-            ))}
-          </nav>
-        </div>
-      </header>
-
-      <SiteStats />
-      <Inspector />
-
-      <aside className="hud hud--panel hud--legend">
-        {LEGEND.map(([label, color]) => (
-          <div key={label} className="legend__row">
-            <span className="legend__swatch" style={{ background: color }} />
-            {label}
-          </div>
-        ))}
+      <LiveTopBar />
+      <aside className="sidebar">
+        <LiveKpis />
+        <LiveFilters />
       </aside>
-
-      <footer className="hud hud--panel hud--hint">Click anything to inspect · Drag to pan · Scroll to zoom · Esc to close</footer>
+      <Inspector />
+      <StatusBar legend={LEGEND} />
     </div>
   );
 }
+

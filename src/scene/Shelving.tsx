@@ -29,7 +29,8 @@ function BoxInstances({ boxes, capacity, color, onSelect, invisible = false }: {
   boxes: Box[];
   capacity: number;
   color: string;
-  onSelect: Props['onSelect'];
+  /** Omit for parts that shouldn't take clicks. */
+  onSelect?: Props['onSelect'];
   /** Pick-only geometry: clickable but never drawn. */
   invisible?: boolean;
 }) {
@@ -43,7 +44,13 @@ function BoxInstances({ boxes, capacity, color, onSelect, invisible = false }: {
         <meshStandardMaterial color={color} roughness={0.8} />
       )}
       {boxes.map((b, i) => (
-        <Instance key={i} position={b.position} scale={b.scale} color={b.color} {...handlers(() => onSelect(b.target))} />
+        <Instance
+          key={i}
+          position={b.position}
+          scale={b.scale}
+          color={b.color}
+          {...(onSelect ? handlers(() => onSelect(b.target)) : {})}
+        />
       ))}
     </Instances>
   );
@@ -51,8 +58,8 @@ function BoxInstances({ boxes, capacity, color, onSelect, invisible = false }: {
 
 /**
  * Pallet racking for every aisle in use, with stock drawn at the bin each
- * inventory record points at. Rack parts select the rack; pallets and
- * cartons select the stock item. Only re-renders when stock changes.
+ * inventory record points at. The rack's top and ends select the rack;
+ * pallets and cartons select the stock item. Only re-renders when stock changes.
  */
 export const Shelving = memo(function Shelving({ racks, stock, onSelect }: Props) {
   const { uprights, beams, hits, pallets, cartons } = useMemo(() => {
@@ -105,8 +112,10 @@ export const Shelving = memo(function Shelving({ racks, stock, onSelect }: Props
   const stockCapacity = stock.length * RACK.bays;
   return (
     <group>
-      <BoxInstances key={`u${uprights.length}`} boxes={uprights} capacity={uprights.length} color={COLORS.rackUpright} onSelect={onSelect} />
-      <BoxInstances key={`b${beams.length}`} boxes={beams} capacity={beams.length} color={COLORS.rackBeam} onSelect={onSelect} />
+      {/* Thin frame parts don't take clicks, so they never steal one from a carton behind them;
+          the rack is picked through its top and end hit areas instead. */}
+      <BoxInstances key={`u${uprights.length}`} boxes={uprights} capacity={uprights.length} color={COLORS.rackUpright} />
+      <BoxInstances key={`b${beams.length}`} boxes={beams} capacity={beams.length} color={COLORS.rackBeam} />
       <BoxInstances key={`h${hits.length}`} boxes={hits} capacity={hits.length} color="#000000" onSelect={onSelect} invisible />
       <BoxInstances key={`p${stockCapacity}`} boxes={pallets} capacity={stockCapacity} color={COLORS.pallet} onSelect={onSelect} />
       {/* White base so each instance's own colour shows through */}

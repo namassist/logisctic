@@ -21,10 +21,10 @@ const TREE_BELTS: [minX: number, maxX: number, minZ: number, maxZ: number, count
   [-90, 90, 70, 84, 18], // across the road
 ];
 
-/** Low-poly trees framing the site. */
-export function Decor() {
+/** Low-poly trees framing a site, in site coordinates; `seed` varies the planting per site. */
+export function Decor({ seed }: { seed: number }) {
   const trees = useMemo(() => {
-    const rand = mulberry32(42);
+    const rand = mulberry32(seed);
     return TREE_BELTS.flatMap(([minX, maxX, minZ, maxZ, count]) =>
       Array.from({ length: count }, () => ({
         x: minX + rand() * (maxX - minX),
@@ -32,7 +32,7 @@ export function Decor() {
         size: 1.6 + rand() * 1.4,
       })),
     );
-  }, []);
+  }, [seed]);
 
   return (
     <group>

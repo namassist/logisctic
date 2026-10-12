@@ -5,7 +5,6 @@
  */
 import {
   ACTIVE_SHIPMENT_STATUSES,
-  delayMinutes,
   shipmentWeightKg,
   type Dock,
   type DockId,
@@ -25,6 +24,7 @@ import {
 import { workProgress, type SimState } from '../sim/simulation';
 import { entityKey, parseRackId, type EntityKey, type EntityRef } from './entities';
 import { formatClock, formatNumber, formatWhen } from './format';
+import { minutesLate, ON_TIME_GRACE_MIN } from './ops';
 
 export type Tone = 'amber' | 'blue' | 'green' | 'red' | 'gray';
 
@@ -81,7 +81,7 @@ export interface DetailsInput {
 
 // ── Labels ─────────────────────────────────────────────────────────────────
 
-const TRUCK_STATE: Record<TruckStatus, StateBadge> = {
+export const TRUCK_STATE: Record<TruckStatus, StateBadge> = {
   loading: { label: 'Loading', tone: 'amber' },
   unloading: { label: 'Unloading', tone: 'amber' },
   in_transit: { label: 'In transit', tone: 'amber' },
@@ -162,13 +162,14 @@ function summarize(input: DetailsInput, found: ReturnType<typeof currentOrNext>)
     cancelled: 'Cancelled',
   }[s.status];
 
-  const minutes = delayMinutes(s);
+  // Same rule as the on-time KPI and the delayed filter.
+  const minutes = minutesLate(s);
   const delay: StateBadge =
-    minutes > 0
-      ? { label: `${minutes} min late`, tone: minutes > 30 ? 'red' : 'amber' }
+    minutes > ON_TIME_GRACE_MIN
+      ? { label: `${minutes} min late`, tone: minutes > 60 ? 'red' : 'amber' }
       : minutes < 0
         ? { label: `${-minutes} min early`, tone: 'green' }
-        : { label: 'On time', tone: 'green' };
+        : { label: minutes > 0 ? `On time · +${minutes} min` : 'On time', tone: 'green' };
 
   return {
     id: s.id,

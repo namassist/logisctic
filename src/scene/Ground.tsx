@@ -31,8 +31,53 @@ function Stripes({ stripes, color }: { stripes: Stripe[]; color: string }) {
   );
 }
 
-/** Grass, apron, yard, access road, lane markings and the reference grid. */
-export function Ground({ dockCount }: { dockCount: number }) {
+/** Grass, the highway joining every site, and the reference grid, in world coordinates. */
+export function WorldGround({ highway }: { highway: { minX: number; maxX: number } }) {
+  const { yellow, white } = useMemo(() => {
+    const length = highway.maxX - highway.minX;
+    const centerX = (highway.minX + highway.maxX) / 2;
+    const yellow: Stripe[] = [-1, 1].map((side) => ({
+      x: centerX,
+      z: ROAD.z + side * (ROAD.width / 2 - 0.4),
+      w: length,
+      d: 0.15,
+    }));
+    const white: Stripe[] = [];
+    for (let x = highway.minX + 2; x < highway.maxX; x += 6) white.push({ x, z: ROAD.z, w: 3, d: 0.15 });
+    return { yellow, white };
+  }, [highway.minX, highway.maxX]);
+
+  const span = highway.maxX - highway.minX;
+  const centerX = (highway.minX + highway.maxX) / 2;
+  const gridDepth = MAP_BOUNDS.maxZ - MAP_BOUNDS.minZ + 60;
+
+  return (
+    <group>
+      <mesh position={[centerX, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[span + 800, 800]} />
+        <meshStandardMaterial color={COLORS.grass} roughness={1} />
+      </mesh>
+      <Pad minX={highway.minX} maxX={highway.maxX} minZ={ROAD.z - ROAD.width / 2} maxZ={ROAD.z + ROAD.width / 2} y={0.012} color={COLORS.road} />
+      <Grid
+        position={[centerX, 0.04, (MAP_BOUNDS.minZ + MAP_BOUNDS.maxZ) / 2]}
+        args={[span, gridDepth]}
+        cellSize={2}
+        cellThickness={0.6}
+        cellColor="#3b4452"
+        sectionSize={10}
+        sectionThickness={1}
+        sectionColor="#56657a"
+        fadeDistance={260}
+        fadeStrength={1.5}
+      />
+      <Stripes stripes={yellow} color={COLORS.laneYellow} />
+      <Stripes stripes={white} color={COLORS.laneWhite} />
+    </group>
+  );
+}
+
+/** One site's apron, yard and markings, in site coordinates. */
+export function SiteGround({ dockCount }: { dockCount: number }) {
   const { yellow, white } = useMemo(() => {
     const yellow: Stripe[] = [];
     const white: Stripe[] = [];
@@ -54,43 +99,13 @@ export function Ground({ dockCount }: { dockCount: number }) {
         white.push({ x, z, w: 0.12, d: slotDepth });
       }
     }
-
-    // Road edges and dashed centre line.
-    for (const side of [-1, 1]) {
-      yellow.push({ x: (ROAD.minX + ROAD.maxX) / 2, z: ROAD.z + side * (ROAD.width / 2 - 0.4), w: ROAD.maxX - ROAD.minX, d: 0.15 });
-    }
-    for (let x = ROAD.minX + 2; x < ROAD.maxX; x += 6) {
-      white.push({ x, z: ROAD.z, w: 3, d: 0.15 });
-    }
     return { yellow, white };
   }, [dockCount]);
 
-  const mapCenterX = (MAP_BOUNDS.minX + MAP_BOUNDS.maxX) / 2;
-  const mapCenterZ = (MAP_BOUNDS.minZ + MAP_BOUNDS.maxZ) / 2;
-
   return (
     <group>
-      <mesh position={[0, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[800, 800]} />
-        <meshStandardMaterial color={COLORS.grass} roughness={1} />
-      </mesh>
       <Pad {...APRON} y={0.01} color={COLORS.asphalt} />
       <Pad {...YARD} y={0.011} color={COLORS.asphalt} />
-      <Pad minX={ROAD.minX} maxX={ROAD.maxX} minZ={ROAD.z - ROAD.width / 2} maxZ={ROAD.z + ROAD.width / 2} y={0.012} color={COLORS.road} />
-
-      <Grid
-        position={[mapCenterX, 0.04, mapCenterZ]}
-        args={[MAP_BOUNDS.maxX - MAP_BOUNDS.minX + 80, MAP_BOUNDS.maxZ - MAP_BOUNDS.minZ + 60]}
-        cellSize={2}
-        cellThickness={0.6}
-        cellColor="#3b4452"
-        sectionSize={10}
-        sectionThickness={1}
-        sectionColor="#56657a"
-        fadeDistance={260}
-        fadeStrength={1.5}
-      />
-
       <Stripes stripes={yellow} color={COLORS.laneYellow} />
       <Stripes stripes={white} color={COLORS.laneWhite} />
     </group>
